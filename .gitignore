@@ -1,0 +1,5 @@
+data/
+results/vit_lstm_attention.ipynb
+results/vit_transformer.ipynb
+**/__pycache__/
+**/*.pyc

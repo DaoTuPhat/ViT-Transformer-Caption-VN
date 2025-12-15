@@ -1,7 +1,6 @@
 import os
 import json
 import pandas as pd
-
 from PIL import Image
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -13,10 +12,10 @@ from torchvision import transforms
 
 def load_vocab(vocab_path):
     with open(vocab_path, "r", encoding="utf-8") as f:
-        # Tải từ điển từ file JSON {token: idx}
-        stoi = json.load(f)
-
-    # Đảo ngược lại {idx: token} phòng khi cần debug / decode
+        # {token: idx}
+        stoi = json.load(f) 
+        
+    # {idx: token}
     itos = {int(idx): tok for tok, idx in stoi.items()}
     return stoi, itos
 
@@ -24,35 +23,36 @@ def load_vocab(vocab_path):
 class ViImageCaptionDataset(Dataset):
     def __init__(
         self,
-        csv_path,
-        vocab_path,
-        data_root,              # Thư mục gốc chứa các thư mục con của từng dataset
-        split="train",
-        transform=None,
-        max_len=40,
-        sep=";",
-        source_to_dir=None,     # Mapping dataset_source -> thư mục chứa ảnh
+        csv_path,  
+        vocab_path,  
+        data_root,  
+        split="train",  
+        transform=None,  
+        max_len=40,  
+        sep=";",  
+        source_to_dir=None,  
     ):
         super().__init__()
         self.csv_path = csv_path
+        self.vocab_path = vocab_path
         self.data_root = data_root
         self.split = split
         self.max_len = max_len
         self.sep = sep
 
-        # 1. Đọc CSV & lọc split
+        # Load dataframe
         df = pd.read_csv(csv_path, sep=sep)
         df = df[df["split"] == split].reset_index(drop=True)
         self.df = df
 
-        # 2. Load vocab
+        # Load vocab
         self.stoi, self.itos = load_vocab(vocab_path)
         self.pad_idx = self.stoi["<pad>"]
         self.bos_idx = self.stoi["<bos>"]
         self.eos_idx = self.stoi["<eos>"]
         self.unk_idx = self.stoi["<unk>"]
 
-        # 3. Map dataset_source -> thư mục chứa ảnh
+        # Map dataset_source to directory
         if source_to_dir is None:
             #  - "Flickr"       -> data/flickr
             #  - "KTVIC"        -> data/ktvic
@@ -64,23 +64,23 @@ class ViImageCaptionDataset(Dataset):
             }
         self.source_to_dir = source_to_dir
 
-        # 4. Transform
+        # Transform
         if transform is None:
-            self.transform = transforms.Compose([
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225],
-                ),
-            ])
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((224, 224)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                    ),
+                ]
+            )
         else:
             self.transform = transform
 
-
     def __len__(self):
         return len(self.df)
-
 
     def numericalize_caption(self, caption_tok: str):
         if not isinstance(caption_tok, str):
@@ -94,7 +94,7 @@ class ViImageCaptionDataset(Dataset):
         ids.append(self.eos_idx)
 
         if len(ids) > self.max_len:
-            ids = ids[:self.max_len]
+            ids = ids[: self.max_len]
             if ids[-1] != self.eos_idx:
                 ids[-1] = self.eos_idx
 
@@ -102,23 +102,18 @@ class ViImageCaptionDataset(Dataset):
         ids = torch.tensor(ids, dtype=torch.long)
         return ids, length
 
-
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-
         src = row["dataset_source"]
         if src not in self.source_to_dir:
-            raise ValueError(f"dataset_source '{src}' không có trong source_to_dir")
+            raise ValueError(f"Not found in source_to_dir: {src}")
 
         img_dir = self.source_to_dir[src]
         img_path = os.path.join(img_dir, row["image_filename"])
-
         try:
             image = Image.open(img_path).convert("RGB")
         except Exception as e:
-            # Log nhẹ để biết có file nào hỏng
-            print(f"[WARN] Lỗi mở ảnh {img_path}: {e}. Dùng ảnh đen thay thế.")
-            # Tạo ảnh đen 224x224
+            print(f"[WARN] Error opening image {img_path}: {e}. Using black image instead.")
             from PIL import Image as _Image
             image = _Image.new("RGB", (224, 224), (0, 0, 0))
 
@@ -127,7 +122,7 @@ class ViImageCaptionDataset(Dataset):
         caption_ids, length = self.numericalize_caption(caption_tok)
 
         return image, caption_ids, length
-    
+
 
 def build_collate_fn(pad_idx):
     def collate_fn(batch):
@@ -155,32 +150,36 @@ def create_dataloaders(
     csv_path,
     vocab_path,
     data_root,
-    batch_size,
+    batch_size=64,
     max_len=40,
     num_workers=0,
     sep=";",
 ):
-    train_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.RandomCrop((224, 224)),  # Random crop
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-        transforms.RandomRotation(10),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
+    train_transform = transforms.Compose(
+        [
+            transforms.Resize((256, 256)),
+            transforms.RandomCrop((224, 224)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.RandomRotation(10),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ]
+    )
 
-    val_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
+    val_transform = transforms.Compose(
+        [
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ]
+    )
 
     train_dataset = ViImageCaptionDataset(
         csv_path=csv_path,
@@ -232,7 +231,7 @@ def create_dataloaders(
         collate_fn=collate_fn,
         pin_memory=True,
     )
-    
+
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
@@ -242,4 +241,11 @@ def create_dataloaders(
         pin_memory=True,
     )
 
-    return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
+    return (
+        train_loader,
+        val_loader,
+        test_loader,
+        train_dataset,
+        val_dataset,
+        test_dataset,
+    )
